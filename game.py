@@ -38,6 +38,26 @@ class SoccerGameAI:
             pygame.display.set_caption('Neural Football 1v1')
         
         self.clock = pygame.time.Clock()
+        
+        # Load Assets (Only in Render Mode)
+        if self.render_mode:
+            try:
+                self.field_img = pygame.image.load('assets/field.png').convert()
+                self.field_img = pygame.transform.scale(self.field_img, (self.w, self.h))
+                
+                self.player_img = pygame.image.load('assets/player.png').convert_alpha()
+                self.player_img = pygame.transform.scale(self.player_img, (BLOCK_SIZE*2, BLOCK_SIZE*2))
+                
+                self.ball_img = pygame.image.load('assets/ball.png').convert_alpha()
+                self.ball_img = pygame.transform.scale(self.ball_img, (int(BLOCK_SIZE), int(BLOCK_SIZE)))
+                
+                self.assets_loaded = True
+            except Exception as e:
+                print(f"Warning: Could not load assets: {e}")
+                self.assets_loaded = False
+                
+            self.particles = [] # List of [x, y, vx, vy, life, color]
+
         self.reset()
 
     def reset(self, level=3):
@@ -46,7 +66,12 @@ class SoccerGameAI:
         self.score_bot = 0
         self.frame_iteration = 0
         self.level = level
+        self.match_time = config.MATCH_DURATION * config.FPS # Frames
         
+        self._reset_positions()
+        return self.get_state()
+
+    def _reset_positions(self):
         # Entities (x, y, vx, vy)
         self.ai_pos = np.array([self.w/4, self.h/2], dtype=float)
         self.ai_vel = np.array([0.0, 0.0], dtype=float)
@@ -56,7 +81,7 @@ class SoccerGameAI:
         
         self.ball_pos = np.array([self.w/2, self.h/2], dtype=float)
         self.ball_vel = np.array([0.0, 0.0], dtype=float)
-        self.ball_spin = 0.0 # Positive = Counter-Clockwise, Negative = Clockwise
+        self.ball_spin = 0.0
         
         # Curriculum Scenarios
         if self.level == 1: # SHOOTING
@@ -100,7 +125,13 @@ class SoccerGameAI:
         self.comm_bot = 0
         self.comm_bot_teammate = 0
         
+        self.comm_bot = 0
+        self.comm_bot_teammate = 0
+        
         self.last_dist_to_ball = np.linalg.norm(self.ai_pos - self.ball_pos)
+        
+        # Possession Tracking (0=None, 1=AI, 2=AI_Teammate, 3=Bot, 4=Bot_Teammate)
+        self.last_touch_player = 0
         
     def _move_entity(self, pos, vel, action_vec=None):
         # Apply acceleration if action is taken
@@ -225,23 +256,39 @@ class SoccerGameAI:
             self._kick_ball(self.ai_pos, self.ai_vel, action_ai)
             reward = 1 # Touch ball
             
+            # Pass Reward (Receive)
+            if self.last_touch_player == 2:
+                reward += config.REWARD_PASS
+                # We could also reward the passer (Teammate) here if we had access to their reward buffer
+                
+            self.last_touch_player = 1
+            
         # AI 2 (Teammate)
         if self.level == 4:
             dist_ai_2 = np.linalg.norm(self.ball_pos - self.ai_teammate_pos)
             if dist_ai_2 < (p_radius + b_radius):
                 self._kick_ball(self.ai_teammate_pos, self.ai_teammate_vel, action_ai_2)
                 reward = 1 
+                
+                # Pass Reward (Receive by Teammate)
+                if self.last_touch_player == 1:
+                    # Reward AI 1 for successful pass
+                    reward += config.REWARD_PASS
+                    
+                self.last_touch_player = 2
         
         # Bot 1
         dist_bot = np.linalg.norm(self.ball_pos - self.bot_pos)
         if dist_bot < (p_radius + b_radius):
             self._kick_ball(self.bot_pos, self.bot_vel, action_bot)
+            self.last_touch_player = 3
             
         # Bot 2
         if self.level == 4:
             dist_bot_2 = np.linalg.norm(self.ball_pos - self.bot_teammate_pos)
             if dist_bot_2 < (p_radius + b_radius):
                 self._kick_ball(self.bot_teammate_pos, self.bot_teammate_vel, action_bot_2)
+                self.last_touch_player = 4
                 
         return reward, done, score
 
@@ -319,15 +366,55 @@ class SoccerGameAI:
         reward -= 0.05 # Time penalty
         game_over = False
         
+        # Match Timer
+        self.match_time -= 1
+        if self.match_time <= 0:
+            game_over = True
+            
         if goal_status == 1: # AI Scored
             reward = 10
             self.score_ai += 1
-            game_over = True
+            
+            # Assist Reward
+            # If Teammate scored (how do we know? We don't track who kicked last into goal explicitly, 
+            # but last_touch_player should be 1 or 2).
+            # If last_touch_player was 2 (Teammate), and previous was 1 (AI), that's an assist?
+            # No, last_touch_player is updated on collision.
+            # If Teammate scored, last_touch_player IS 2.
+            # But we want to reward AI (Player 1) if they assisted.
+            # We need to track "Assister".
+            # For simplicity: If Teammate scores, and AI touched it recently? 
+            # Let's just say: If Teammate scores (last_touch == 2), we give AI a small bonus?
+            # Or better: If AI scores (last_touch == 1) and previous touch was 2 -> Assist for Teammate (not useful for P1 training unless shared reward).
+            # If Teammate scores (last_touch == 2) and previous touch was 1 -> Assist for AI.
+            # We need history of touches.
+            pass # Complex to implement perfectly without history.
+            # Simplified Assist: If AI scores, great. If Teammate scores, also reward AI?
+            # Yes, cooperative reward.
+            if self.last_touch_player == 2:
+                 reward += config.REWARD_ASSIST # AI gets reward when teammate scores too!
+            
+            if self.score_ai >= config.GOAL_LIMIT:
+                game_over = True
+            else:
+                self._reset_positions() # Kick-off
+                # Give ball to Bot (conceded)
+                self.ball_pos = np.array([self.w/2, self.h/2])
+                self.ball_vel = np.array([2.0, 0.0]) # Slight push towards AI
+                
             return reward, game_over, self.score_ai
+            
         elif goal_status == 2: # Bot Scored
             reward = -10
             self.score_bot += 1
-            game_over = True
+            if self.score_bot >= config.GOAL_LIMIT:
+                game_over = True
+            else:
+                self._reset_positions() # Kick-off
+                # Give ball to AI (conceded)
+                self.ball_pos = np.array([self.w/2, self.h/2])
+                self.ball_vel = np.array([-2.0, 0.0]) # Slight push towards Bot
+                
             return reward, game_over, self.score_ai
             
         # Shaping: Distance to ball
@@ -348,12 +435,14 @@ class SoccerGameAI:
         if not self.render_mode:
             return
             
-        self.display.fill(BLACK)
-        
         # Draw Field
-        pygame.draw.rect(self.display, GRAY, (0, 0, self.w, self.h), 2)
-        pygame.draw.line(self.display, GRAY, (self.w/2, 0), (self.w/2, self.h), 2)
-        pygame.draw.circle(self.display, GRAY, (self.w/2, self.h/2), 50, 2)
+        if self.assets_loaded:
+            self.display.blit(self.field_img, (0, 0))
+        else:
+            self.display.fill(BLACK)
+            pygame.draw.rect(self.display, GRAY, (0, 0, self.w, self.h), 2)
+            pygame.draw.line(self.display, GRAY, (self.w/2, 0), (self.w/2, self.h), 2)
+            pygame.draw.circle(self.display, GRAY, (self.w/2, self.h/2), 50, 2)
         
         # Draw Goals
         goal_top = self.h/3
@@ -361,16 +450,62 @@ class SoccerGameAI:
         pygame.draw.rect(self.display, NEON_GREEN, (0, goal_top, 5, goal_h)) # Left Goal
         pygame.draw.rect(self.display, RED, (self.w-5, goal_top, 5, goal_h)) # Right Goal
         
-        # Draw Entities
-        pygame.draw.circle(self.display, BLUE, self.ai_pos.astype(int), 15) # AI
-        pygame.draw.circle(self.display, RED, self.bot_pos.astype(int), 15) # Bot
-        pygame.draw.circle(self.display, WHITE, self.ball_pos.astype(int), 10) # Ball
+        # Particles
+        self._update_particles()
         
-        # Draw Score
-        text = font.render(f"AI: {self.score_ai}  Bot: {self.score_bot}", True, WHITE)
+        # Draw Entities
+        if self.assets_loaded:
+            # AI
+            self._draw_sprite(self.player_img, self.ai_pos, BLUE)
+            # Bot
+            self._draw_sprite(self.player_img, self.bot_pos, RED)
+            # Ball
+            ball_rect = self.ball_img.get_rect(center=self.ball_pos.astype(int))
+            # Rotate ball based on spin? Too complex for now, just blit
+            self.display.blit(self.ball_img, ball_rect)
+            
+            if self.level == 4:
+                 self._draw_sprite(self.player_img, self.ai_teammate_pos, (100, 100, 255))
+                 self._draw_sprite(self.player_img, self.bot_teammate_pos, (255, 100, 100))
+        else:
+            pygame.draw.circle(self.display, BLUE, self.ai_pos.astype(int), 15) # AI
+            pygame.draw.circle(self.display, RED, self.bot_pos.astype(int), 15) # Bot
+            pygame.draw.circle(self.display, WHITE, self.ball_pos.astype(int), 10) # Ball
+            
+            if self.level == 4:
+                 pygame.draw.circle(self.display, (100, 100, 255), self.ai_teammate_pos.astype(int), 15)
+                 pygame.draw.circle(self.display, (255, 100, 100), self.bot_teammate_pos.astype(int), 15)
+        
+        # Draw Score & Time
+        time_sec = int(self.match_time / config.FPS)
+        mins = time_sec // 60
+        secs = time_sec % 60
+        
+        text = font.render(f"AI: {self.score_ai}  Bot: {self.score_bot}   Time: {mins:02}:{secs:02}", True, WHITE)
         self.display.blit(text, [self.w/2 - text.get_width()/2, 10])
         
         pygame.display.flip()
+
+    def _draw_sprite(self, img, pos, color):
+        # Tint image
+        tinted = img.copy()
+        tinted.fill(color, special_flags=pygame.BLEND_MULT)
+        rect = tinted.get_rect(center=pos.astype(int))
+        self.display.blit(tinted, rect)
+
+    def _update_particles(self):
+        # Add particles when running (simple trail)
+        if random.random() < 0.2:
+             self.particles.append([self.ai_pos[0], self.ai_pos[1] + 10, 0, 0, 20, (200, 200, 200)])
+             
+        for p in self.particles[:]:
+            p[0] += p[2]
+            p[1] += p[3]
+            p[4] -= 1 # Life
+            if p[4] <= 0:
+                self.particles.remove(p)
+            else:
+                pygame.draw.circle(self.display, p[5], (int(p[0]), int(p[1])), 2)
         
     def get_state(self):
         # 14 Values (1v1) -> 26 Values (2v2)

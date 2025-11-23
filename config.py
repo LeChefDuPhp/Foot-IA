@@ -4,6 +4,8 @@ import torch
 WIDTH = 800
 HEIGHT = 600
 FPS = 60
+MATCH_DURATION = 180 # Seconds
+GOAL_LIMIT = 5
 
 # Physics Constants
 FRICTION = 0.98
@@ -37,9 +39,14 @@ ACTION_SIZE = PHYSICAL_ACTIONS * COMM_SIZE # 24 Combined actions
 PARALLEL_ENVS = 16
 OPPONENT_UPDATE_GAMES = 100
 OPPONENT_WINRATE_THRESHOLD = 0.60
+OPPONENT_WINRATE_THRESHOLD = 0.60
 CHECKPOINT_DIR = './checkpoints'
 MAX_CHECKPOINTS = 15
 MODEL_DIR = './model'
+
+# Rewards
+REWARD_PASS = 1.0
+REWARD_ASSIST = 5.0
 
 # Device
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
