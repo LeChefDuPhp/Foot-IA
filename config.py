@@ -58,3 +58,19 @@ TEAM_SIZE = 2 # Players per team
 STATE_SIZE_2V2 = 26 # Expanded state vector for 4 players + ball
 
 
+# Auto-Tuning
+try:
+    import autotune
+    overrides = autotune.get_optimal_config()
+    BATCH_SIZE = overrides.get('BATCH_SIZE', BATCH_SIZE)
+    PARALLEL_ENVS = overrides.get('PARALLEL_ENVS', PARALLEL_ENVS)
+    MAX_MEMORY = overrides.get('MAX_MEMORY', MAX_MEMORY)
+    
+    print(f"Auto-Tuned Parameters:")
+    print(f"  BATCH_SIZE: {BATCH_SIZE}")
+    print(f"  PARALLEL_ENVS: {PARALLEL_ENVS}")
+    print(f"  MAX_MEMORY: {MAX_MEMORY}")
+except ImportError:
+    print("Auto-tuning module not found. Using default config.")
+except Exception as e:
+    print(f"Auto-tuning failed: {e}. Using default config.")

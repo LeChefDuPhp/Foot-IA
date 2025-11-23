@@ -25,6 +25,10 @@ Le système utilise l'apprentissage par renforcement (Reinforcement Learning) av
 ### 📊 Infrastructure & Contrôle
 *   **Entraînement Parallèle** : 16 parties sont jouées simultanément pour accélérer l'apprentissage (optimisé pour Ryzen 5800X).
 *   **Web Dashboard** : Une interface de contrôle complète (React + FastAPI) pour suivre les courbes de progression, mettre en pause, ou sauvegarder manuellement.
+29: 
+30: ### 💾 Gestion Automatique & Optimisation
+31: *   **Rotation des Checkpoints** : Le système conserve automatiquement les 15 derniers fichiers de sauvegarde pour éviter de saturer le disque dur.
+32: *   **Auto-Tuning Matériel** : Au lancement, le script analyse votre CPU, RAM et GPU pour ajuster automatiquement les paramètres d'entraînement (`BATCH_SIZE`, `PARALLEL_ENVS`, `MAX_MEMORY`) et garantir une stabilité maximale.
 
 ---
 
@@ -104,6 +108,8 @@ Le fichier `config.py` contient tous les réglages. Il a été réglé pour votr
 *   `HIDDEN_LAYERS = [2048, 1024, 512, 256]` : Un cerveau très profond pour des stratégies complexes.
 
 Si vous changez de machine pour une moins puissante, réduisez ces valeurs (ex: Batch 1024, Envs 4, Layers [512, 256]).
+107: 
+108: *Note : Grâce à l'Auto-Tuning, ces valeurs sont désormais ajustées automatiquement au démarrage si nécessaire.*
 
 ## 🐛 Dépannage
 
