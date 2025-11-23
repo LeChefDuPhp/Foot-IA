@@ -61,6 +61,19 @@ class Agent:
         checkpoint_path = os.path.join(config.CHECKPOINT_DIR, f"manual_save_gen_{self.generation}.pth")
         torch.save(self.model.state_dict(), checkpoint_path)
         print(f"Manual Checkpoint saved: {checkpoint_path}")
+        self._rotate_checkpoints()
+
+    def _rotate_checkpoints(self):
+        try:
+            checkpoints = [os.path.join(config.CHECKPOINT_DIR, f) for f in os.listdir(config.CHECKPOINT_DIR) if f.endswith('.pth')]
+            checkpoints.sort(key=os.path.getmtime)
+            
+            while len(checkpoints) > config.MAX_CHECKPOINTS:
+                oldest_checkpoint = checkpoints.pop(0)
+                os.remove(oldest_checkpoint)
+                print(f"Removed old checkpoint: {oldest_checkpoint}")
+        except Exception as e:
+            print(f"Error rotating checkpoints: {e}")
 
     def get_action(self, state, model=None):
         if model is None: model = self.model
@@ -310,6 +323,7 @@ def train():
                 checkpoint_path = os.path.join(config.CHECKPOINT_DIR, f"gen_{agent.generation}.pth")
                 torch.save(agent.model.state_dict(), checkpoint_path)
                 print(f"Checkpoint saved: {checkpoint_path}")
+                agent._rotate_checkpoints()
                 
                 # Curriculum
                 if win_rate > config.CURRICULUM_THRESHOLD and agent.level < 4:
